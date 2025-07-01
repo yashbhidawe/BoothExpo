@@ -22,7 +22,9 @@
     "pdf2json": "^3.1.6",
     "pdfjs-dist": "^3.11.174",
     "sharp": "^0.34.2",
-    "tesseract.js": "^6.0.1"
+    "string-similarity": "^4.0.4",
+    "tesseract.js": "^6.0.1",
+    "validator": "^13.15.15"
   },
   "type": "commonjs",
   "devDependencies": {

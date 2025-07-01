@@ -1,5 +1,32 @@
 const fs = require("fs");
 const pdfjsLib = require("pdfjs-dist");
+const stringSimilarity = require("string-similarity");
+
+const genericWords = [
+  "enterprise",
+  "enterprises",
+  "handicrafts",
+  "handicraft",
+  "decor",
+  "decorators",
+  "exports",
+  "events",
+  "technology",
+  "engineering",
+  "steel",
+  "plastics",
+  "plast",
+  "pvt",
+  "ltd",
+  "llp",
+  "design",
+  "tent",
+  "furnishing",
+  "impex",
+  "group",
+  "solution",
+  "interior",
+];
 
 // Enhanced junk detection
 function isJunk(text) {
@@ -21,6 +48,42 @@ function isJunk(text) {
   ];
 
   return junkPatterns.some((pattern) => pattern.test(text.trim()));
+  return (
+    !text ||
+    text.length < 3 ||
+    /^[A-Z]{1,3}\d{1,4}$/.test(text) || // A12, F104 etc.
+    /^\d{1,2}\s*[xX*]\s*\d{1,2}$/.test(text) || // 6x8
+    /^\d+\s*(Sqm|SQM)$/i.test(text) || // 24 Sqm
+    /entry|exit|hall|wash|room|toilet|road map|demo|booked|emergency|ladies|gents|stairs|center|march|organized by/i.test(
+      text
+    )
+  );
+}
+
+function isTooGeneric(name) {
+  const words = name.toLowerCase().split(/\s+/);
+  const matches = words.filter((w) => genericWords.includes(w));
+  return matches.length >= words.length * 0.6 || words.length < 2;
+}
+
+function hasTwoDistinctWords(name) {
+  const words = name.trim().toLowerCase().split(/\s+/);
+  return new Set(words).size >= 2;
+}
+
+function normalizeName(name) {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9\s&]/gi, "")
+    .replace(/\b(pvt|ltd|llp|inc|l\.?l\.?p\.?)\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isNearDuplicate(existing, candidate) {
+  return existing.some(
+    (e) => stringSimilarity.compareTwoStrings(e, candidate) > 0.85
+  );
 }
 
 // Better company name validation
@@ -174,6 +237,35 @@ function extractFromTables(items) {
         companies.push(cleanCompanyName(combined));
       }
     }
+
+    let added = false;
+
+    for (const block of blocks) {
+      const match = block.items.some(
+        (i) =>
+          Math.abs(i.x - x) < thresholds.x && Math.abs(i.y - y) < thresholds.y
+      );
+      if (match) {
+        block.items.push({ text, x, y });
+        added = true;
+        break;
+      }
+    }
+
+    if (!added) {
+      blocks.push({ items: [{ text, x, y }] });
+    }
+  }
+
+  return blocks.map((block) => {
+    const sorted = block.items.sort((a, b) =>
+      b.y !== a.y ? b.y - a.y : a.x - b.x
+    );
+    return sorted
+      .map((i) => i.text)
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
   });
 
   return companies;
@@ -186,6 +278,8 @@ function extractFromDirectory(items) {
 
   // Group into lines
   const lineGroups = {};
+function groupByLines(items) {
+  const lines = {};
   items.forEach((item) => {
     if (isJunk(item.str)) return;
 
@@ -230,6 +324,14 @@ function extractFromDirectory(items) {
   });
 
   return companies;
+  return Object.values(lines).map((line) => {
+    const sorted = line.sort((a, b) => a.x - b.x);
+    return sorted
+      .map((i) => i.text)
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+  });
 }
 
 async function extractCompanyNames(pdfPath) {
@@ -294,6 +396,47 @@ async function extractCompanyNames(pdfPath) {
     console.error("PDF extraction error:", error);
     throw new Error(`Failed to extract companies from PDF: ${error.message}`);
   }
+  const items = [];
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    items.push(...content.items);
+  }
+
+  const thresholds = adaptiveThreshold(items);
+  let clustered = clusterByProximity(items, thresholds);
+
+  if (clustered.length < 5 || clustered.length > 500) {
+    console.warn("⚠️ Fallback to line join logic");
+    clustered = groupByLines(items);
+  }
+
+  const final = [];
+  const seenNormalized = new Set();
+
+  for (let raw of clustered) {
+    const cleaned = raw.replace(/\s+/g, " ").trim();
+    if (!cleaned || cleaned.length < 4) continue;
+
+    // Extract possible company-like segments
+    const pieces = cleaned
+      .split(/\d+\s*(Sqm|sqm|SQM)|\d{1,2}\s*[xX*]\s*\d{1,2}|[A-Z]{1,2}\d{1,3}/g)
+      .filter((p) => typeof p === "string" && p.trim().length > 0)
+      .map((p) => p.trim());
+
+    for (const name of pieces) {
+      if (name.length < 5 || isTooGeneric(name) || !hasTwoDistinctWords(name))
+        continue;
+
+      const norm = normalizeName(name);
+      if (seenNormalized.has(norm) || isNearDuplicate(final, name)) continue;
+
+      seenNormalized.add(norm);
+      final.push(name);
+    }
+  }
+
+  return final;
 }
 
 module.exports = extractCompanyNames;

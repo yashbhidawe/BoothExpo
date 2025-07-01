@@ -1,13 +1,16 @@
-// services/scraper.js
 const axios = require("axios");
 const cheerio = require("cheerio");
+const validator = require("validator");
+
+const LOCATION_FILTER =
+  /Karnataka|Bangalore|Bengaluru|Mysore|Hubli|Belgaum|Mangalore|Pune|Mumbai/i;
 
 function delay(ms) {
   return new Promise((res) => setTimeout(res, ms));
 }
 
 async function scrapeCompanyContact(company) {
-  const query = encodeURIComponent(`${company} contact`);
+  const query = encodeURIComponent(`${company} contact Karnataka`);
   const url = `https://html.duckduckgo.com/html/?q=${query}`;
 
   try {
@@ -19,27 +22,46 @@ async function scrapeCompanyContact(company) {
     });
 
     const $ = cheerio.load(data);
-    const firstResult = $(".result__snippet").first().text();
+    const snippet = $(".result__snippet").first().text().trim();
 
+    const emailMatch = snippet.match(
+      /[a-zA-Z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i
+    );
     const email =
-      firstResult.match(/[a-zA-Z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i)?.[0] || "";
-    const phone = firstResult.match(/(?:\+91[-\s]?|0)?[789]\d{9}/)?.[0] || "";
-    const address = firstResult.length > 30 ? firstResult.slice(0, 100) : "";
+      emailMatch && validator.isEmail(emailMatch[0]) ? emailMatch[0] : "";
+
+    const phoneMatch = snippet.match(/(?:\+91[-\s]?|0)?[789]\d{9}/);
+    const phone =
+      phoneMatch && validator.isMobilePhone(phoneMatch[0], "en-IN")
+        ? phoneMatch[0]
+        : "";
+
+    const address =
+      LOCATION_FILTER.test(snippet) && snippet.length > 30
+        ? snippet.slice(0, 120)
+        : "";
+
+    if (!email && !phone && !address) {
+      return { company, email: "", phone: "", address: "" };
+    }
 
     return { company, email, phone, address };
   } catch (err) {
-    console.error("Scrape failed for:", company);
+    console.error(`❌ Scrape failed for: ${company}`, err.message);
     return { company, email: "", phone: "", address: "" };
   }
 }
 
 async function scrapeMultiple(companies) {
   const results = [];
-  for (const c of companies) {
-    const info = await scrapeCompanyContact(c);
-    results.push(info);
-    await delay(1000); // 1 sec delay between requests
+
+  for (const [i, company] of companies.entries()) {
+    console.log(`🔍 [${i + 1}/${companies.length}] Scraping: ${company}`);
+    const result = await scrapeCompanyContact(company);
+    results.push(result);
+    await delay(1000);
   }
+
   return results;
 }
 
