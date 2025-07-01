@@ -1,51 +1,62 @@
 const fs = require("fs");
 const pdfjsLib = require("pdfjs-dist");
 
-// junk patterns
 function isJunk(text) {
   return (
     !text ||
+    text.length < 3 ||
     /^\d{3,4}$/.test(text) || // booth numbers
-    /^\d{1,2}x\d{1,2}$/i.test(text) || // dimensions
-    /entry|exit|hall|wash|room|toilet|food|stall|gate|booked|walk|way|open to sky/i.test(
+    /^\d{1,2}x\d{1,2}(\.\d+)?$/i.test(text) || // booth sizes
+    /^[A-Z]{3,4}\d{1,3}[A-Z]?$/.test(text) || // stall IDs like 123A, A21B
+    /entry|exit|hall|wash|toilet|open to sky|gate|food|booked|path|aisle|walk/i.test(
       text
-    ) ||
-    text.length <= 2
+    )
   );
 }
 
-// group words into spatially close "blocks" — booth names
-function groupIntoBlocks(items, yThreshold = 10, xThreshold = 60) {
+function adaptiveThreshold(items) {
+  const ys = items.map((i) => i.transform[5]);
+  const xs = items.map((i) => i.transform[4]);
+
+  const avgY = Math.abs((Math.max(...ys) - Math.min(...ys)) / ys.length);
+  const avgX = Math.abs((Math.max(...xs) - Math.min(...xs)) / xs.length);
+
+  return {
+    y: Math.max(6, Math.min(avgY * 1.3, 16)),
+    x: Math.max(30, Math.min(avgX * 2.5, 100)),
+  };
+}
+
+function clusterByProximity(items, thresholds) {
   const blocks = [];
 
   for (const item of items) {
-    const { str: text, transform } = item;
-    const cleaned = text.trim();
-    if (isJunk(cleaned)) continue;
+    const text = item.str.trim();
+    if (isJunk(text)) continue;
 
-    const x = transform[4];
-    const y = transform[5];
+    const x = item.transform[4];
+    const y = item.transform[5];
 
-    let placed = false;
+    let added = false;
 
     for (const block of blocks) {
-      const close = block.items.some(
-        (i) => Math.abs(i.y - y) < yThreshold && Math.abs(i.x - x) < xThreshold
+      const match = block.items.some(
+        (i) =>
+          Math.abs(i.x - x) < thresholds.x && Math.abs(i.y - y) < thresholds.y
       );
-      if (close) {
-        block.items.push({ text: cleaned, x, y });
-        placed = true;
+      if (match) {
+        block.items.push({ text, x, y });
+        added = true;
         break;
       }
     }
 
-    if (!placed) {
-      blocks.push({ items: [{ text: cleaned, x, y }] });
+    if (!added) {
+      blocks.push({ items: [{ text, x, y }] });
     }
   }
 
-  // Merge sorted text in each block
-  const merged = blocks.map((block) => {
+  const joined = blocks.map((block) => {
     const sorted = block.items.sort((a, b) =>
       b.y !== a.y ? b.y - a.y : a.x - b.x
     );
@@ -56,30 +67,70 @@ function groupIntoBlocks(items, yThreshold = 10, xThreshold = 60) {
       .trim();
   });
 
-  // Deduplicate and remove trash
-  const unique = [...new Set(merged)].filter(
-    (name) =>
-      name.length > 4 && !/^\d/.test(name) && /^[\w\s&.,'-]+$/.test(name)
-  );
-
-  return unique;
+  return joined;
 }
 
-async function extractCompanyNames(filePath) {
-  const data = new Uint8Array(fs.readFileSync(filePath));
-  const loadingTask = pdfjsLib.getDocument({ data });
-  const pdf = await loadingTask.promise;
+function groupByLines(items) {
+  const lines = {};
 
-  const allItems = [];
+  items.forEach((item) => {
+    const text = item.str.trim();
+    if (isJunk(text)) return;
 
+    const x = item.transform[4];
+    const y = Math.round(item.transform[5]);
+
+    if (!lines[y]) lines[y] = [];
+    lines[y].push({ text, x });
+  });
+
+  const merged = Object.values(lines).map((line) => {
+    const sorted = line.sort((a, b) => a.x - b.x);
+    return sorted
+      .map((i) => i.text)
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+  });
+
+  return merged;
+}
+
+function filterNames(lines) {
+  const keywords =
+    /Inc\.|Ltd|LLP|Corporation|Tech|Botanicals?|Handicrafts?|Furnishing|Decor|Steel|Plastics?|Events?|Overseas|Exports?|Foods?|Pharma|Group|Pvt|Enterprise/i;
+  return [
+    ...new Set(
+      lines.map((l) => l.trim()).filter((l) => l.length > 5 && keywords.test(l))
+    ),
+  ];
+}
+
+async function extractCompanyNames(pdfPath) {
+  const data = new Uint8Array(fs.readFileSync(pdfPath));
+  const pdf = await pdfjsLib.getDocument({ data }).promise;
+
+  const items = [];
   for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
     const page = await pdf.getPage(pageNum);
     const content = await page.getTextContent();
-    allItems.push(...content.items);
+    items.push(...content.items);
   }
 
-  const grouped = groupIntoBlocks(allItems);
-  return grouped;
+  // --- Try smart clustered extraction
+  const threshold = adaptiveThreshold(items);
+  const clustered = clusterByProximity(items, threshold);
+  const cleanedClustered = filterNames(clustered);
+
+  if (cleanedClustered.length >= 5 && cleanedClustered.length <= 150) {
+    return cleanedClustered;
+  }
+
+  // --- fallback to raw line joining (like test2)
+  console.warn("⚠️ Fallback to line joining due to bad clustering");
+  const lineJoined = groupByLines(items);
+  const fallbackCleaned = filterNames(lineJoined);
+  return fallbackCleaned;
 }
 
 module.exports = extractCompanyNames;

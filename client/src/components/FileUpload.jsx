@@ -1,0 +1,45 @@
+// components/FileUpload.jsx
+import React, { useState } from "react";
+import axios from "axios";
+
+function FileUpload({ onData }) {
+  const [file, setFile] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append("pdf", file);
+
+    setLoading(true);
+    try {
+      const res = await axios.post(
+        "http://localhost:5000/api/upload",
+        formData
+      );
+      onData(res.data.enrichedData); // extracted + scraped
+    } catch (err) {
+      alert("Error uploading file");
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="upload-form">
+      <input
+        type="file"
+        accept="application/pdf"
+        onChange={(e) => setFile(e.target.files[0])}
+      />
+      <button type="submit" disabled={loading}>
+        {loading ? "Processing..." : "Upload PDF"}
+      </button>
+    </form>
+  );
+}
+
+export default FileUpload;
