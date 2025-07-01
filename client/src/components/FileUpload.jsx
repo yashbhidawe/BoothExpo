@@ -1,4 +1,3 @@
-// components/FileUpload.jsx
 import React, { useState } from "react";
 import axios from "axios";
 
@@ -19,7 +18,7 @@ function FileUpload({ onData }) {
         "http://localhost:5000/api/upload",
         formData
       );
-      onData(res.data.enrichedData); // extracted + scraped
+      onData(res.data.enrichedData);
     } catch (err) {
       alert("Error uploading file");
       console.error(err);
@@ -38,6 +37,7 @@ function FileUpload({ onData }) {
       <button type="submit" disabled={loading}>
         {loading ? "Processing..." : "Upload PDF"}
       </button>
+      <p>Estimated time to process a file 1-2 minutes</p>
     </form>
   );
 }

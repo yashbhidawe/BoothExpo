@@ -8,7 +8,7 @@ function App() {
 
   return (
     <div style={{ padding: "2rem" }}>
-      <h1>PDF Company Extractor</h1>
+      <h1>PDF Scrapper</h1>
       <FileUpload onData={setData} />
       <CompanyTable data={data} />
     </div>
