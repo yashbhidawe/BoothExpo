@@ -14,10 +14,7 @@ function FileUpload({ onData }) {
 
     setLoading(true);
     try {
-      const res = await axios.post(
-        "http://localhost:5000/api/upload",
-        formData
-      );
+      const res = await axios.post("https://boothexpo.onrender.com", formData);
       onData(res.data.enrichedData);
     } catch (err) {
       alert("Error uploading file");
