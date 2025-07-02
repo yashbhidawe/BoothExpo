@@ -14,7 +14,10 @@ function FileUpload({ onData }) {
 
     setLoading(true);
     try {
-      const res = await axios.post("https://boothexpo.onrender.com", formData);
+      const res = await axios.post(
+        "https://boothexpo.onrender.com/api/upload",
+        formData
+      );
       onData(res.data.enrichedData);
     } catch (err) {
       alert("Error uploading file");
@@ -34,7 +37,7 @@ function FileUpload({ onData }) {
       <button type="submit" disabled={loading}>
         {loading ? "Processing..." : "Upload PDF"}
       </button>
-      <p>Estimated time to process a file 1-2 minutes</p>
+      <p>Estimated time to process a file 2-3 minutes</p>
     </form>
   );
 }
